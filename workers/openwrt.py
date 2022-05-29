@@ -1,33 +1,72 @@
-import json
-import logger
-import inspect
+#!/usr/bin/env python3
+#import json
+#import logger
+#import inspect
 # LINE 64 -> make it so that it only runs if there are new devices, when compared to a device list already sent to home assistant
+import json
+#from contextlib import contextmanager
 
-from contextlib import contextmanager
+#from mqtt import MqttMessage
+#from workers.base import BaseWorker
 
-from mqtt import MqttMessage
-from workers.base import BaseWorker
+#_LOGGER = logger.get(__name__)
 
-_LOGGER = logger.get(__name__)
+#REQUIREMENTS = ["bluepy"]
 
-REQUIREMENTS = ["bluepy"]
 
+### THESE MIGHT BE NEEDED
+#from mqtt import MqttConfigMessage
+
+#from mqtt import MqttMessage
+#from workers.base import BaseWorker
+
+import os
+import subprocess
+        
 
 #HA
-from interruptingcow import timeout
-import time
-from exceptions import DeviceTimeoutError
-from mqtt import MqttConfigMessage
+#from interruptingcow import timeout
+#import time
+#from exceptions import DeviceTimeoutError
+#from mqtt import MqttConfigMessage
+
 ATTR_LOW_BATTERY = 'low_battery'
 
-class Lywsd03MmcWorker(BaseWorker):
+class rawdata():
+    mac: str
+    temperature: float
+    humidity: float
+    counter: int
+    battery_mv: int
+    battery_pct: int
+    rssi: int
+    
+
+class results():
+    addr: str
+    content: str
+    rssi: int
+ 
+    def getScanData(self):
+        return [("","",self.content)]    
+    
+
+class Lywsd03MmcWorker():
     callingclass = None
     blocklist = []
+    friendly_name = {}
+    command_timeout = 30
+    measurement_interval = 4
+    rolling_average_count = 8
+    topic_prefix = "testtopicprefix"
+    global_topic_prefix = "globaltopicprefix"
+
+
     devicesDiscovered = [] # home assistant
-    monitoredAttrs = ["temperature","humidity", "packet_loss"] #["temperature", "temperature_raw", "humidity","humidity_raw", "battery_pct", "rssi", "battery_mv", "lqi_measurement", "lqi", "packet_loss", "lqi_average"] #add all supported
-    def _setup(self):
+    monitoredAttrs = ["temperature","temperature_raw", "humidity", "lqi", "packet_loss", "rssi"] #["temperature", "temperature_raw", "humidity","humidity_raw", "battery_pct", "rssi", "battery_mv", "lqi_measurement", "lqi", "packet_loss", "lqi_average"] #add all supported
+    def _setup(self): 
         self.devices = {}
-        _LOGGER.info("Adding devices by auto-discovery. LYWSD03MMC is supported with custom firmware (ATC or pvvx).")
+        print("Adding devices by auto-discovery. LYWSD03MMC is supported with custom firmware (ATC or pvvx).")
         #self.devices
       #  if hasattr(self, 'monitored_attributes'):
       #    _LOGGER.info("%s",type(self.monitored_attributes))
@@ -38,8 +77,8 @@ class Lywsd03MmcWorker(BaseWorker):
         #  _LOGGER.info("%s",type(self.friendly_name))
           #_LOGGER.info("%s",self.friendly_name)
 
-        stack = inspect.stack()
-        self.callingclass = stack[2][0]
+   #   stack = inspect.stack()
+    #    self.callingclass = stack[2][0]
         #the_class = stack[2][0].f_locals["self"].__class__.__name__
         #the_method = stack[2][0].f_code.co_name
       #  _LOGGER.info("I was called by {}.{}()".format(stack[1][0], stack[1][1]))
@@ -51,6 +90,52 @@ class Lywsd03MmcWorker(BaseWorker):
             #_LOGGER.info("Adding %s device '%s' (%s)", repr(self), name, mac)
             #self.devices[name] = lywsd03mmc(mac.lower(), command_timeout=self.command_timeout, passive=self.passive, measurement_interval=self.measurement_interval if hasattr(self, 'measurement_interval') else 4)
 
+
+
+
+
+
+
+
+
+
+    def format_discovery_topic(self, mac, *sensor_args):
+        node_id = mac.replace(":", "-")
+        object_id = "_".join([repr(self), *sensor_args])
+        return "{}/{}".format(node_id, object_id)
+
+    def format_discovery_id(self, mac, *sensor_args):
+        return "bt-mqtt-gateway/{}".format(
+            self.format_discovery_topic(mac, *sensor_args)
+        )
+
+    def format_discovery_name(self, *sensor_args):
+        return "_".join([repr(self), *sensor_args])
+
+    def format_topic(self, *topic_args):
+        return "/".join([self.topic_prefix, *topic_args])
+
+    def format_prefixed_topic(self, *topic_args):
+        topic = self.format_topic(*topic_args)
+        if self.global_topic_prefix:
+            return "{}/{}".format(self.global_topic_prefix, topic)
+        return topic
+
+    def __repr__(self):
+        return self.__module__.split(".")[-1]
+
+
+
+ 
+
+
+
+
+
+
+
+
+
     def find_device(self, mac):
         for name, device in self.devices.items():
             if device.mac == mac:
@@ -60,7 +145,9 @@ class Lywsd03MmcWorker(BaseWorker):
     def find_supported_device(self, scanData, deviceName, mac):
         for (adtype, desc, data) in scanData:
 #            _LOGGER.info("yes?  %s  or (%s)", data[0:4], (len(data) == ((19-2)*2)))
+
             supported = ((len(data) == ((16-2)*2) or len(data) == ((19-2)*2)) and (data[0:4] == "1a18") )
+   
             for mac_part in self.blocklist:
               if mac.lower().replace(":","")[6:12] in str(mac_part).lower().replace(":",""): return False
         #    if not mac.lower().replace(":","")[6:12] in str("B3B4D0").lower().replace(":",""): return False
@@ -73,10 +160,11 @@ class Lywsd03MmcWorker(BaseWorker):
                 if mac.lower().replace(":","")[6:12] in str(mac_part).lower().replace(":",""):
                   _friendly_name = friendlyname
                  # _LOGGER.info("Found friendly name: %s %s", mac_part, friendlyname )
-              _LOGGER.info("Adding newly found device: %s %s (%s)", _friendly_name, deviceName, mac)
+             # _LOGGER.info("Adding newly found device: %s %s (%s)", _friendly_name, deviceName, mac)
+              print("adding supported device!")
               self.devices[deviceName] = lywsd03mmc(mac, command_timeout=self.command_timeout, pvvx=pvvx, friendly_name=_friendly_name, measurement_interval = self.measurement_interval, rolling_average_count = self.rolling_average_count )
               self.config_device(_friendly_name, mac)
-              self.callingclass.f_locals["self"].__class__._publish_config(self.callingclass.f_locals["self"])
+              #self.callingclass.f_locals["self"].__class__._publish_config(self.callingclass.f_locals["self"])
             return ((len(data) == ((16-2)*2) or len(data) == ((19-2)*2)) and (data[0:4] == "1a18") )
 
 
@@ -85,12 +173,13 @@ class Lywsd03MmcWorker(BaseWorker):
     #    self.devices[deviceName] = lywsd03mmc(mac, command_timeout=self.command_timeout, pvvx)
     
 
+ 
 
-    def status_update(self):
-        from bluepy import btle
-        scanner = btle.Scanner()
-        results = scanner.scan(self.scan_timeout if hasattr(self, 'scan_timeout') else 20.0, passive=True)
-
+    def status_update(self, results):
+#        from bluepy import btle
+ #       scanner = btle.Scanner()
+      #  results = scanner.scan(self.scan_timeout if hasattr(self, 'scan_timeout') else 20.0, passive=True)
+   #     print("whyy")
         for res in results:
             mac = res.addr
             deviceName = "ATC_" + mac.upper().replace(":","")[6:12]
@@ -106,32 +195,35 @@ class Lywsd03MmcWorker(BaseWorker):
                # _LOGGER.info("%s - received scan data %s, RSSI: %s", res.addr, value, res.rssi)
                 device.setRSSI(res.rssi)
                 device.processScanValue(value) 
+      #  print("updating device state")
+        if 'device' in locals():
+          self.update_device_state(device.friendly_name, device)
+     #   yield self.update_device_state(device.friendly_name, device)
 
-
-        for name, device in self.devices.items():
-            if device.freshresults == False: continue
-            try:
-                with timeout(self.command_timeout, exception=DeviceTimeoutError):
-                    yield self.update_device_state(device.friendly_name, device)
-            except btle.BTLEException as e:
-                logger.log_exception(
-                    _LOGGER,
-                    "Error during update of %s device '%s' (%s): %s",
-                    repr(self),
-                    name,
-                    device.mac,
-                    type(e).__name__,
-                    suppress=True,
-                )
-            except DeviceTimeoutError:
-                logger.log_exception(
-                    _LOGGER,
-                    "Time out during update of %s device '%s' (%s)",
-                    repr(self),
-                    name,
-                    device.mac,
-                    suppress=True,
-                )
+        #for name, device in self.devices.items():
+        #    if device.freshresults == False: continue
+        #    try:
+        #        with timeout(self.command_timeout, exception=DeviceTimeoutError):
+        #            yield self.update_device_state(device.friendly_name, device)
+        #    except btle.BTLEException as e:
+        #        logger.log_exception(
+        #            _LOGGER,
+        #            "Error during update of %s device '%s' (%s): %s",
+        #            repr(self),
+        #            name,
+        #            device.mac,
+        #            type(e).__name__,
+        #            suppress=True,
+        #        )
+        #    except DeviceTimeoutError:
+        #        logger.log_exception(
+        #            _LOGGER,
+        #            "Time out during update of %s device '%s' (%s)",
+        #            repr(self),
+        #            name,
+        #            device.mac,
+        #            suppress=True,
+        #        )
             
 ## NON-HA
             #try:
@@ -147,7 +239,7 @@ class Lywsd03MmcWorker(BaseWorker):
 # Home assistant integration
     def config(self, availability_topic):
 
-        stack = inspect.stack()
+        #stack = inspect.stack()
         
    #     _LOGGER.info("CONFIG was called by {}.{}()".format(stack[1][0], stack[1][1]))
     #    _LOGGER.info("CONFIG was called by {}.{}()".format(stack[2][0], stack[2][1]))
@@ -199,28 +291,45 @@ class Lywsd03MmcWorker(BaseWorker):
                 payload.update({"icon": "mdi:access-point", "unit_of_measurement": "rssi"})
             elif attr == "packet_loss":
                 payload.update({"icon": "mdi:broadcast", "unit_of_measurement": "%"})
- 
-            ret.append(
-                MqttConfigMessage(
-                    MqttConfigMessage.SENSOR,
-                    self.format_discovery_topic(mac, name, attr),  #definition in base.py
-                    payload=payload,
-                )
-            )
+            jsonpayload = json.dumps(payload)
+#            print(payload)
+            entirecommand = "/usr/bin/mosquitto_pub -h ut29.wondersense.fi -p 21218 -u mqttsensor -P apuaanoimqtt -t homeassistant/sensor/" + mac + "/" + attr + "/config " + "-m"
+            progcommand = "/usr/bin/mosquitto_pub"
+            address = "-h ut29.wondersense.fi"
+            port =  "-p 21218 "
+            user = "-u mqttsensor " 
+            password = "-P apuaanoimqtt "
+            topic = "-t homeassistant/sensor/" + mac + "/" + attr + "/config "
+            value = "-m payload"
+            message = "\"" + jsonpayload.replace("\"", "\\\""  ) + "\"" 
+            message =  jsonpayload
+         #   print (message)
+            allstuff = entirecommand.split(" ")
+            allstuff.append(message)
+       #     subprocess.Popen([progcommand, address, port, user, password,  topic,  value])            
+            subprocess.Popen(allstuff)
+#homeassistant/sensor/
+            #ret.append(
+            #    mqttconfigmessage(
+            #        mqttconfigmessage.sensor,
+            #        self.format_discovery_topic(mac, name, attr),  #definition in base.py
+            #        payload=payload,
+            #    )
+            #)
 
-        ret.append(
-            MqttConfigMessage(
-                MqttConfigMessage.BINARY_SENSOR,
-                self.format_discovery_topic(mac, name, ATTR_LOW_BATTERY), #definition in base.py
-                payload={
-                    "unique_id": self.format_discovery_id(mac, name, ATTR_LOW_BATTERY),
-                    "state_topic": self.format_prefixed_topic(name, ATTR_LOW_BATTERY),
-                    "name": self.format_discovery_name(name, ATTR_LOW_BATTERY),
-                    "device": device,
-                    "device_class": "battery",
-                },
-            )
-        )
+        #ret.append(
+        #    MqttConfigMessage(
+        #        MqttConfigMessage.BINARY_SENSOR,
+        #        self.format_discovery_topic(mac, name, ATTR_LOW_BATTERY), #definition in base.py
+        #        payload={
+        #            "unique_id": self.format_discovery_id(mac, name, ATTR_LOW_BATTERY),
+        #            "state_topic": self.format_prefixed_topic(name, ATTR_LOW_BATTERY),
+        #            "name": self.format_discovery_name(name, ATTR_LOW_BATTERY),
+        #            "device": device,
+        #            "device_class": "battery",
+        #        },
+        #    )
+        #)
 
         #for command in self._config_commands:
         #    messages = command.execute()
@@ -269,21 +378,32 @@ class Lywsd03MmcWorker(BaseWorker):
                 attrValue = device.getLQIAverage()
 
             if attrValue == "skip": continue
+            #print("%s: %s", topic, attrValue)
+            #jsonpayload = json.dumps(payload)
+            entirecommand = "/usr/bin/mosquitto_pub -h ut29.wondersense.fi -p 21218 -u mqttsensor -P apuaanoimqtt -t " +  self.format_prefixed_topic(name, attr) + " -m"
 
-            ret.append(
-                MqttMessage(
-                    topic=self.format_topic(name, attr),
-                    payload=attrValue,
-                )
-            )
+            message =  str(attrValue)
+      #      print (message)
+            allstuff = entirecommand.split(" ")
+            
+            allstuff.append(message)
+       #     subprocess.Popen([progcommand, address, port, user, password,  topic,  value])            
+            subprocess.Popen(allstuff)
 
-       #  Low battery binary sensor
-        ret.append(
-            MqttMessage(
-                topic=self.format_topic(name, ATTR_LOW_BATTERY),
-                payload=self.true_false_to_ha_on_off(device.getBatteryPercentage() < 3),
-            )
-        )
+
+            #ret.append(
+            #    MqttMessage(
+            #        topic=self.format_topic(name, attr),
+            #        payload=attrValue,
+            #    )
+            #)
+
+        #ret.append(
+        #    MqttMessage(
+        #        topic=self.format_topic(name, ATTR_LOW_BATTERY),
+        #        payload=self.true_false_to_ha_on_off(device.getBatteryPercentage() < 3),
+        #    )
+        #)
 
         return ret
 
@@ -493,7 +613,7 @@ class Measurements:
               self.device_counter += 256 - self.previousCounterPosition + counter_position
               if self.previousCounterPosition < 255:
                  for i in range(self.previousCounterPosition + 1, 256):
-                 #   _LOGGER.info (" zroing rollover: %s --  previousLoc %s currentLoc %s",   i, self.previousCounterPosition, counter_position )      
+                    ## .info (" zroing rollover: %s --  previousLoc %s currentLoc %s",   i, self.previousCounterPosition, counter_position )      
                     self.records[i] = 0
               for i in range(0, counter_position+1):
                 self.records[i] = 0
@@ -524,3 +644,38 @@ class Measurements:
           #  _LOGGER.info("ok. Samesign: %s, diff: %s, value: %s", sameSign, measurementDiff,measurements["0"] )
             self.previousValue = self.currentValue
             return measurements["0"]        
+
+worker = Lywsd03MmcWorker()
+worker._setup()
+#with os.popen('hcidump --raw') as pse:
+with os.popen('source ./bletool.sh -python') as pse:
+    for line in pse:
+        broadcastvalue = line[1:-1].replace(" ", "").lower()
+        #mac =broadcastvalue[46:48]+broadcastvalue[44:46]+broadcastvalue[42:44]+broadcastvalue[40:42]+broadcastvalue[38:40]+ broadcastvalue[36:38]
+#  mac=${packet:46:2}${packet:44:2}${packet:42:2}${packet:40:2}${packet:38:2}${packet:36:2}
+        #print(mac)
+        #print(output)
+        #continue
+
+        listofresults=[]
+        result = results()
+        listofresults.append(result)
+      #  listofresults[output[0]] = result
+        result.addr = broadcastvalue[46:48]+broadcastvalue[44:46]+broadcastvalue[42:44]+broadcastvalue[40:42]+broadcastvalue[38:40]+ broadcastvalue[36:38]
+        result.rssi = int.from_bytes(bytearray.fromhex(broadcastvalue[-2:]), byteorder='little', signed=True)
+        result.content = broadcastvalue[32:-2]
+        
+
+        worker.status_update(listofresults)  
+        #worker.status_update(listofresults)    
+        #output = line.split("\t")
+        #worker.status_update(line)
+        #rawoutput = rawdata()
+        #rawoutput.mac = output[0]
+        #rawoutput.temperature = output[1]
+        #rawoutput.humidity= output[2]
+        #rawoutput.battery_mv = output[3]
+        #rawoutput.battery_pct = output[4]
+        #rawoutput.counter = output[5]
+        #rawoutput.rssi = output[7]
+        #worker.status_update()

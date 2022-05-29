@@ -12,6 +12,7 @@ from exceptions import WorkerTimeoutError
 from workers_queue import _WORKERS_QUEUE
 import logger
 
+
 _LOGGER = logger.get(__name__)
 
 
@@ -206,6 +207,14 @@ class WorkersManager:
         )
 
     def _publish_config(self):
+        stack = inspect.stack()
+        self.callingclass = stack[2][0]
+        #the_class = stack[2][0].f_locals["self"].__class__.__name__
+        #the_method = stack[2][0].f_code.co_name
+     #   _LOGGER.info("I was called by {}.{}()".format(stack[0][0], stack[0][1]))
+    #    _LOGGER.info("I was called by {}.{}()".format(stack[1][0], stack[1][1]))
+    #    _LOGGER.info("I was called by {}.{}()".format(stack[2][0], stack[2][1]))
+        
         for command in self._config_commands:
             messages = command.execute()
             for msg in messages:
